@@ -35,7 +35,7 @@ def compare_attribute(list_pds, attr_list, local=True, glob=True):
                 method_name = var_data.get("method", "Unknown Method")
                 
                 # Create a dictionary to store this row of data
-                row = {"method": method_name, "var": var}
+                row = {"method": method_name, "var": var, "workspace_name": pds.workspace_name}
                 
                 # Convert sizes from bytes to MB and speeds from bytes/s to MB/s
                 for acc in attr_list:
