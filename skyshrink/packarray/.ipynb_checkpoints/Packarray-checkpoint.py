@@ -147,8 +147,8 @@ class Packarray:
     def sanity_check(self,check_list=[]):
 
         # original Part
-        if not self.original_path.endswith('.nc'):
-            raise ValueError("Only NetCDF (.nc) files are supported.")
+        # if not self.original_path.endswith('.nc'):
+        #     raise ValueError("Only NetCDF (.nc) files are supported.")
         if self.original_path and os.path.exists(self.original_path):
             self.report["original"]=True
             
