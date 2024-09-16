@@ -2,13 +2,33 @@ import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
 def calculate_spatial_metrics(ds1, ds2, var):
-    original=ds1[var].mean(dim='XTIME')
-    mae = np.abs(ds1[var] - ds2[var]).mean(dim='XTIME')
-    max_error = np.abs(ds1[var] - ds2[var]).max(dim='XTIME')
-    correlation = xr.corr(ds1[var], ds2[var], dim='XTIME')
+    original=ds1[var].mean(dim='Time')
+    mae = np.abs(ds1[var] - ds2[var]).mean(dim='Time')
+    max_error = np.abs(ds1[var] - ds2[var]).max(dim='Time')
+    correlation = xr.corr(ds1[var], ds2[var], dim='Time')
     return original,mae, max_error, correlation
 
 
+def spatial_accuracy_map(pds,aggregate=None):
+    pds.sanity_check()
+    ds1 = pds.xarray
+    ds2 = pds.xarray_encoded
+    var_list = pds.glob["var_list"]
+
+    metrics = {}
+
+    for var in var_list:
+        original, mae, max_error, correlation = calculate_spatial_metrics(ds1, ds2, var)
+        metrics[var] = xr.Dataset({
+            'Value': original,
+            'MAE': mae,
+            'MaxError': max_error,
+            'Correlation': correlation
+        })
+
+    # Return a dictionary with variable names as keys and corresponding metrics datasets as values
+    return metrics
+    
 def time_series_accuracy(pds_list, legend_str):
     var_list = pds.glob["var_list"]
     global_df = pd.DataFrame()  # Initialize a global DataFrame to concatenate results
@@ -41,13 +61,37 @@ def time_series_accuracy(pds_list, legend_str):
 
     return global_df
 
+def spatial_accuracy_map(pds,aggregate=None):
+    pds.sanity_check()
+    ds1 = pds.xarray
+    ds2 = pds.xarray_encoded
+    var_list = pds.glob["var_list"]
 
+    metrics = {}
+
+    for var in var_list:
+        original, mae, max_error, correlation = calculate_spatial_metrics(ds1, ds2, var)
+        metrics[var] = xr.Dataset({
+            'Value': original,
+            'MAE': mae,
+            'MaxError': max_error,
+            'Correlation': correlation
+        })
+
+    # Return a dictionary with variable names as keys and corresponding metrics datasets as values
+    return metrics
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-def visualize_spatial_accuracy(pds_list, var_list=None):
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from tqdm import tqdm
+from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
+
+def visualize_spatial_accuracy(pds_list, var_list=None, font_size=15):
     # Calculate spatial accuracy metrics for each pds
-    plt.rcParams.update({'font.size': 15})  # Adjust font size as needed
+    plt.rcParams.update({'font.size': font_size})  # Adjust global font size as needed
+
     metrics_list = [spatial_accuracy_map(pds) for pds in pds_list]
     
     # Determine variables to plot
@@ -65,12 +109,11 @@ def visualize_spatial_accuracy(pds_list, var_list=None):
             if (metric_ds := metrics.get(var)):
                 # Create the first subplot in the row to establish a shared y-axis
                 axes = [fig.add_subplot(gs[row_idx, 0])]
-
-
+                
+                # Set initial titles and labels
                 if row_idx == 0:
-                    axes[0].text(-0.1, 1.05, 'XLAT', transform=axes[0].transAxes, fontsize=15,
-                             verticalalignment='top', horizontalalignment='center', rotation=0)
-      
+                    axes[0].text(-0.1, 1.05, 'XLAT', transform=axes[0].transAxes, fontsize=font_size,
+                                 verticalalignment='top', horizontalalignment='center', rotation=0)
                 
                 # Create other subplots, sharing y-axis with the first in the row
                 for i in range(1, num_metrics):
@@ -82,49 +125,31 @@ def visualize_spatial_accuracy(pds_list, var_list=None):
                     metric = metric_ds[metric_name]
                     aggregated_value = metric.mean().item()
                     std_value = metric.std().item()
-                    im = metric.plot(ax=ax, cmap='viridis', robust=True, add_colorbar=True)
+                    im = metric.plot(ax=ax, cmap='jet', robust=True, add_colorbar=True)
 
-
-                    from matplotlib.ticker import FormatStrFormatter, ScalarFormatter  # Set up the color bar formatter
-                    if im.colorbar is not None:
-                        # Apply a ScalarFormatter to the colorbar for scientific notation
+                    # Format colorbar using ScalarFormatter
+                    if im.colorbar:
                         im.colorbar.formatter = ScalarFormatter(useMathText=True)
                         im.colorbar.formatter.set_powerlimits((0, 2))
-                        im.colorbar.update_ticks()  # Update the ticks to use the formatter
+                        im.colorbar.update_ticks()
+                        im.colorbar.set_label('')
                     
-                    im.colorbar.set_label('')  # Disable the colorbar name
+                    # Set titles and labels with appropriate font sizes
+                    ax.set_title(f'{metric_name}' if row_idx == 0 else '', fontsize=font_size)
+                    ax.set_xlabel('XLONG' if row_idx == num_pds - 1 else '', fontsize=font_size)
+                    ax.xaxis.set_tick_params(labelbottom=(row_idx == num_pds - 1))
+                    ax.set_ylabel(pds.workspace_name if i == 0 else '', fontsize=font_size)
+                    ax.yaxis.set_tick_params(labelleft=(i == 0))
                     
-                    if row_idx == 0:  # Keep the title for the first row
-                        ax.set_title(f'{metric_name}', fontsize=14)
-                    else:
-                        ax.set_title('')  # Remove titles for other rows
-                    
-                    if row_idx == num_pds - 1:
-                        ax.set_xlabel('XLONG')  # Show x-label only on the last row
-                    else:
-                        ax.set_xlabel('')
-                        ax.xaxis.set_tick_params(labelbottom=False)
-                    
-                    if i == 0:  # Show y-label only on the first subplot of each row
-                        ax.set_ylabel(pds.workspace_name)
-                    else:
-                        ax.set_ylabel('')
-                        ax.yaxis.set_tick_params(labelleft=False)
-                    
-                    # Add average and std value text in the bottom right corner
-                    ax.text(0.97, 0.12, f'aver.: {aggregated_value:.2e}',
-                            horizontalalignment='right',
-                            verticalalignment='center',
-                            transform=ax.transAxes,
-                            fontsize=12, color='white', bbox=dict(facecolor='black', alpha=0.6))
-                    
-                    ax.text(0.97, 0.05, f'std: {std_value:.2e}',
-                            horizontalalignment='right',
-                            verticalalignment='center',
-                            transform=ax.transAxes,
-                            fontsize=12, color='white', bbox=dict(facecolor='black', alpha=0.6))
+                    # Annotation for average and standard deviation
+                    ax.text(0.97, 0.12, f'aver.: {aggregated_value:.2e}', horizontalalignment='right',
+                            verticalalignment='center', transform=ax.transAxes,
+                            fontsize=font_size, color='white', bbox=dict(facecolor='black', alpha=0.6))
+                    ax.text(0.97, 0.05, f'std: {std_value:.2e}', horizontalalignment='right',
+                            verticalalignment='center', transform=ax.transAxes,
+                            fontsize=font_size, color='white', bbox=dict(facecolor='black', alpha=0.6))
         
-        # Adjust layout and show plot
+        # Adjust layout and display the plot
         plt.tight_layout(pad=-0.0)
         plt.show()
 

@@ -235,8 +235,11 @@ class Packarray:
             if not self.report["original"]:
                 raise ValueError("Update Failed")
             self.glob["original_size"] = get_directory_size(self.original_path)
-            
             ds = xr.open_dataset(self.original_path)
+            # Check if 'Time' is in the dataset dimensions and 'XTIME' is not already a coordinate
+            if 'Time' in ds.dims and 'XTIME' not in ds.coords:
+                ds = ds.assign_coords(XTIME=ds['Time'])
+
             self.glob["var_list"]=list(ds.data_vars)
             for var in self.glob["var_list"]:
                 if not hasattr(self, var):
