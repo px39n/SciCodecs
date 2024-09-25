@@ -2,10 +2,10 @@ import xarray as xr
 import numpy as np
 import matplotlib.pyplot as plt
 def calculate_spatial_metrics(ds1, ds2, var):
-    original=ds1[var].mean(dim='Time')
-    mae = np.abs(ds1[var] - ds2[var]).mean(dim='Time')
-    max_error = np.abs(ds1[var] - ds2[var]).max(dim='Time')
-    correlation = xr.corr(ds1[var], ds2[var], dim='Time')
+    original=ds1[var].mean(dim='time')
+    mae = np.abs(ds1[var] - ds2[var]).mean(dim='time')
+    max_error = np.abs(ds1[var] - ds2[var]).max(dim='time')
+    correlation = xr.corr(ds1[var], ds2[var], dim='time')
     return original,mae, max_error, correlation
 
 
@@ -253,7 +253,7 @@ def visualize_time_series(global_df, y_str="mean", legend="tolerance", fontsize=
             ax.plot(df_legend.index, df_legend[y_str], label=f'{legend}: {legend_val}')
         
         ax.set_title(f'{var}')
-        ax.set_xlabel('Time')
+        ax.set_xlabel('time')
         ax.set_ylabel(y_str)
         ax.set_yscale('log')  # Set y-axis to logarithmic scale
         ax.legend()

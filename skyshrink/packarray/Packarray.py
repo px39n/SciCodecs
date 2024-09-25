@@ -4,9 +4,11 @@ import xarray as xr
 import yaml
 import zarr
 from ..compressor.base import ZarrCompressor
+from ..compressor import NNCompressor
 from ..utils import get_directory_size
+
 class Packarray:
-    def __init__(self, workspace_name=None, original_path=None, log_path=None,verbose=1):
+    def __init__(self, workspace_name=None, original_path=None,  root_dir=None, log_path=None,verbose=1):
         
         self.glob={
         # Original    meta    level: original_meta
@@ -29,6 +31,7 @@ class Packarray:
         self.verbose=verbose
         self.encoding=None        
         self.workspace_name=workspace_name        
+        self.root_dir=root_dir
         self.report=None        
         self.unzip_path = None
         self.zip_dir = None        
@@ -56,7 +59,7 @@ class Packarray:
         self.update_parameter(["compress_pre"])
         
         if not self.workspace_name:
-            detect_workspace()
+            self.detect_workspace()
         if self.verbose:
             if os.path.exists(self.zip_dir):         
                 print(f"[Skyshrink:{self.workspace_name}] Start Overwrite to ...{self.zip_dir[-30:]}")
@@ -65,11 +68,13 @@ class Packarray:
 
         start_time = time.time()
         ds = xr.open_dataset(self.original_path)
-        
-        if not isinstance (self.encoding, dict):
+        from numcodecs.abc import Codec
+        if isinstance (self.encoding, dict):
             ds.to_zarr(self.zip_dir, mode='w', encoding={var: {'compressor': self.encoding} for var in self.glob["var_list"]})
-        else:
+        elif isinstance(self.encoding, Codec):
             ds.to_zarr(self.zip_dir, mode='w', encoding=self.encoding)
+        else:
+            self.encoding.compress(self.original_path, self.glob["var_list"], self.zip_dir)
         
         ds.close()  # Close the dataset to free resources 
         self.glob["encoding_time"] = time.time() - start_time
@@ -88,7 +93,7 @@ class Packarray:
 
 
         if not self.workspace_name:
-            detect_workspace()  
+            self.detect_workspace()  
         if self.verbose:    
             if os.path.exists(self.unzip_path): 
                 print(f"[Skyshrink:{self.workspace_name}] Unzipping overwrite to ...{self.unzip_path[-30:]}")
@@ -97,20 +102,52 @@ class Packarray:
             
 
         start_time = time.time()
-        z_c=ZarrCompressor()
-        z_c.decompress(self.zip_dir, unzip_path=self.unzip_path)
+
+        from numcodecs.abc import Codec
+        if isinstance(self.encoding, Codec) or isinstance(self.encoding, dict):
+            z_c=ZarrCompressor()
+            z_c.decompress(self.zip_dir, unzip_path=self.unzip_path)
+        else:
+            self.encoding.decompress(zip_dir=self.zip_dir, unzip_path=self.unzip_path)
+
         self.glob["decoding_time"] = time.time() - start_time
         self.update_parameter(["decompress"])
         self.save_yaml(self.compression_log) 
 
     
     def load_yaml(self, yaml_file):
+        # Custom constructor for numpy.dtype
+        import numpy as np
+
+        # Custom constructor for numpy.dtype
+        def numpy_dtype_constructor(loader, node):
+            state = loader.construct_mapping(node, deep=True)
+            return np.dtype(*state['args'])
+
+        # Custom constructor for numpy.core.multiarray.scalar
+        def numpy_scalar_constructor(loader, node):
+            if isinstance(node, yaml.SequenceNode):
+                dtype = loader.construct_object(node.value[0])
+                value = loader.construct_object(node.value[1])
+                return np.frombuffer(value, dtype=dtype)[0]
+            else:
+                value = loader.construct_scalar(node)
+                return np.array(value).item()
+
+        yaml.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.dtype', numpy_dtype_constructor, Loader=yaml.FullLoader)
+        yaml.add_constructor('tag:yaml.org,2002:python/object/apply:numpy.core.multiarray.scalar', numpy_scalar_constructor, Loader=yaml.FullLoader)
+
         with open(yaml_file, 'r') as file:
             data = yaml.load(file, Loader=yaml.FullLoader)
             # Only update attributes if they exist and are not None
             for key, value in data.items():
-                if value is not None:
-                    setattr(self, key, value)
+                if key != "encoding":
+                    if value is not None:
+                        setattr(self, key, value)
+                else:
+                    import pickle
+                    with open(value, 'rb') as f:
+                        self.encoding = pickle.load(f)
                     
     def save_yaml(self, yaml_file):
         # Get all attributes of the class instance
@@ -120,7 +157,12 @@ class Packarray:
         for attr, value in all_attributes.items():
             if attr !="encoding":
                 data[attr] = value
-        
+            else:
+                import pickle
+                with open(os.path.join(self.workspace_dir, 'encoding.pkl'), 'wb') as f:
+                    pickle.dump(value, f)
+                data[attr]=os.path.join(self.workspace_dir, 'encoding.pkl')
+
         # Save data to YAML file
         with open(yaml_file, 'w') as file:
             yaml.dump(data, file)
@@ -195,22 +237,26 @@ class Packarray:
         # Initialize compress_evaluate to True
         flag = True
         for var in self.glob["var_list"]:
+
             if getattr(self, var):
-                # Condition 2: Ensure no None values in each attribute for the current var
                 compress_list = self.accuracy_list  
-                if not all(getattr(self, var).get(key) is not None for key in compress_list):
-                    flag = False
-                    break
+                for key in compress_list:
+                    if getattr(self, var).get(key) is None:
+                        flag = False
+                        break
             else:
                 flag = False
+            if not flag:
+                break
+
         self.report["accuracy"] = flag
-
-
         
         for check in check_list:
             if not self.report[check]:
                 raise ValueError(f"{check} does not pass sanity check")
-
+            
+        if self.compression_log:
+            self.save_yaml(self.compression_log)
 
     def detect_method(self):
         if isinstance(self.encoding, dict):
@@ -226,19 +272,25 @@ class Packarray:
         return self.glob["method"]
     
     def detect_workspace(self):
-        self.workspace_name=self.glob["method"]
+        if not self.workspace_name:
+            self.workspace_name=self.glob["method"]
+        if not self.root_dir:
+            temp_dir, filename = os.path.split(self.original_path)
+            filename, ext = os.path.splitext(filename)
+            self.root_dir = os.path.join(temp_dir)
+        self.workspace_dir=os.path.join(self.root_dir,self.workspace_name)
+        if not os.path.exists(self.workspace_dir):
+            os.makedirs(self.workspace_dir)
         return self.workspace_name
 
     
-    def update_parameter(self, update_list, local=False):
+    def update_parameter(self, update_list):
         if "original" in update_list:
             if not self.report["original"]:
                 raise ValueError("Update Failed")
             self.glob["original_size"] = get_directory_size(self.original_path)
             ds = xr.open_dataset(self.original_path)
-            # Check if 'Time' is in the dataset dimensions and 'XTIME' is not already a coordinate
-            if 'Time' in ds.dims and 'XTIME' not in ds.coords:
-                ds = ds.assign_coords(XTIME=ds['Time'])
+            # Check if 'Time' is in the dataset dimensions and 'XTIME' is not already a coordinate 
 
             self.glob["var_list"]=list(ds.data_vars)
             for var in self.glob["var_list"]:
@@ -264,14 +316,9 @@ class Packarray:
                         
                 temp_dir, filename = os.path.split(self.original_path)
                 filename, ext = os.path.splitext(filename)
-                workspace_dir = os.path.join(temp_dir, self.workspace_name)
-                
-                if not os.path.exists(workspace_dir):
-                    os.makedirs(workspace_dir)
-                    
-                self.zip_dir = os.path.join(workspace_dir, filename + '_zipped')
-                self.unzip_path = os.path.join(workspace_dir, filename + '_unzipped.nc')
-                self.compression_log = os.path.join(workspace_dir, filename + '_log.yaml')
+                self.zip_dir = os.path.join(self.workspace_dir, filename + '_zipped')
+                self.unzip_path = os.path.join(self.workspace_dir, filename + '_unzipped.nc')
+                self.compression_log = os.path.join(self.workspace_dir, filename + '_log.yaml')
 
             
         if "compress" in update_list:
@@ -282,20 +329,27 @@ class Packarray:
             self.glob["compression_ratio"] = self.glob["compressed_size"] / self.glob["original_size"] 
             self.glob["encoding_speed"] =self.glob["original_size"] /self.glob["encoding_time"]
             
-            ds = zarr.open(self.zip_dir , mode='r') 
+
+            from numcodecs.abc import Codec
+            if isinstance(self.encoding, Codec):
+                ds = zarr.open(self.zip_dir, mode='r')
+
+            
             for var in self.glob["var_list"]:
-                zarr_array = ds[var]
                 if not hasattr(self, var):
                     setattr(self, var, {})
                 compressed_size = get_directory_size(os.path.join(self.zip_dir, var))
                 if not self.workspace_name:
-                    detect_workspace()
+                    self.detect_workspace()
                 if isinstance(self.encoding, dict):
                     getattr(self, var)["method"] = self.encoding["var"]["compressor"].codec_id    
                 else:
                     getattr(self, var)["method"] = self.glob["method"]
                 getattr(self, var)["compressed_size"] = compressed_size
-                getattr(self, var)["compressed_precision"] = zarr_array.dtype 
+                if isinstance(self.encoding, Codec):
+                    getattr(self, var)["compressed_precision"] = ds[var].dtype 
+                else:   
+                    getattr(self, var)["compressed_precision"]=32
                 getattr(self, var)["compression_ratio"] = compressed_size / getattr(self, var)["original_size"] if compressed_size > 0 else None
                 getattr(self, var)["encoding_time"] = self.glob["encoding_time"]
                 getattr(self, var)["encoding_speed"] = self.glob["encoding_speed"]
@@ -386,6 +440,6 @@ class Packarray:
             # Close datasets
             ds1.close()
             ds2.close()
-
+        self.sanity_check()
 
  
