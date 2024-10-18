@@ -4,11 +4,11 @@ import xarray as xr
 import yaml
 import zarr
 from ..compressor.base import ZarrCompressor
-from ..compressor import NNCompressor
+#from ..compressor import NNCompressor
 from ..utils import get_directory_size
 
 class Packarray:
-    def __init__(self, workspace_name=None, original_path=None,  root_dir=None, log_path=None,verbose=1):
+    def __init__(self, workspace_name=None, original_path=None,  save_dir=None, log_path=None,verbose=1):
         
         self.glob={
         # Original    meta    level: original_meta
@@ -31,7 +31,7 @@ class Packarray:
         self.verbose=verbose
         self.encoding=None        
         self.workspace_name=workspace_name        
-        self.root_dir=root_dir
+        self.save_dir=save_dir
         self.report=None        
         self.unzip_path = None
         self.zip_dir = None        
@@ -70,12 +70,14 @@ class Packarray:
         ds = xr.open_dataset(self.original_path)
         from numcodecs.abc import Codec
         if isinstance (self.encoding, dict):
-            ds.to_zarr(self.zip_dir, mode='w', encoding={var: {'compressor': self.encoding} for var in self.glob["var_list"]})
-        elif isinstance(self.encoding, Codec):
             ds.to_zarr(self.zip_dir, mode='w', encoding=self.encoding)
+        elif isinstance(self.encoding, Codec):
+            ds.to_zarr(self.zip_dir, mode='w', encoding={var: {'compressor': self.encoding} for var in self.glob["var_list"]})
         else:
-            self.encoding.compress(self.original_path, self.glob["var_list"], self.zip_dir)
-        
+            #self.encoding.compress(self.original_path, self.glob["var_list"], self.zip_dir)
+            z_c=ZarrCompressor()
+            z_c.compress_compressai(self.encoding, self.original_path, self.zip_dir)
+
         ds.close()  # Close the dataset to free resources 
         self.glob["encoding_time"] = time.time() - start_time
 
@@ -108,7 +110,9 @@ class Packarray:
             z_c=ZarrCompressor()
             z_c.decompress(self.zip_dir, unzip_path=self.unzip_path)
         else:
-            self.encoding.decompress(zip_dir=self.zip_dir, unzip_path=self.unzip_path)
+            z_c=ZarrCompressor()
+            z_c.decompress_compressai(self.zip_dir, self.unzip_path)
+
 
         self.glob["decoding_time"] = time.time() - start_time
         self.update_parameter(["decompress"])
@@ -274,11 +278,11 @@ class Packarray:
     def detect_workspace(self):
         if not self.workspace_name:
             self.workspace_name=self.glob["method"]
-        if not self.root_dir:
+        if not self.save_dir:
             temp_dir, filename = os.path.split(self.original_path)
             filename, ext = os.path.splitext(filename)
-            self.root_dir = os.path.join(temp_dir)
-        self.workspace_dir=os.path.join(self.root_dir,self.workspace_name)
+            self.save_dir = os.path.join(temp_dir)
+        self.workspace_dir=os.path.join(self.save_dir,self.workspace_name)
         if not os.path.exists(self.workspace_dir):
             os.makedirs(self.workspace_dir)
         return self.workspace_name
@@ -311,8 +315,8 @@ class Packarray:
                 
             else:
                 # Using workspace
-                if not self.workspace_name: 
-                    self.detect_workspace()
+                #if not self.workspace_dir: 
+                self.detect_workspace()
                         
                 temp_dir, filename = os.path.split(self.original_path)
                 filename, ext = os.path.splitext(filename)

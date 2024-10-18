@@ -153,6 +153,78 @@ def visualize_spatial_accuracy(pds_list, var_list=None, font_size=15):
         plt.tight_layout(pad=-0.0)
         plt.show()
 
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from tqdm import tqdm
+from matplotlib.ticker import FormatStrFormatter, ScalarFormatter
+
+def visualize_spatial_accuracy(pds_list, var_list=None, font_size=15):
+    # Calculate spatial accuracy metrics for each pds
+    plt.rcParams.update({'font.size': font_size})  # Adjust global font size as needed
+
+    metrics_list = [spatial_accuracy_map(pds) for pds in pds_list]
+    
+    # Determine variables to plot
+    var_list = var_list or list(metrics_list[0].keys())
+    
+    for var in var_list:
+        num_metrics = len(metrics_list[0][var].data_vars)
+        num_pds = len(pds_list)
+        
+        # Set up the GridSpec layout
+        fig = plt.figure(figsize=(5 * num_metrics, 4 * num_pds))
+        gs = gridspec.GridSpec(num_pds, num_metrics, figure=fig)
+        
+        for row_idx, (pds, metrics) in tqdm(enumerate(zip(pds_list, metrics_list))):
+            if (metric_ds := metrics.get(var)):
+                # Create the first subplot in the row to establish a shared y-axis
+                axes = [fig.add_subplot(gs[row_idx, 0])]
+                
+                # Set initial titles and labels
+                if row_idx == 0:
+                    axes[0].text(-0.1, 1.05, 'XLAT', transform=axes[0].transAxes, fontsize=font_size,
+                                 verticalalignment='top', horizontalalignment='center', rotation=0)
+                
+                # Create other subplots, sharing y-axis with the first in the row
+                for i in range(1, num_metrics):
+                    ax = fig.add_subplot(gs[row_idx, i], sharey=axes[0])
+                    axes.append(ax)
+                
+                # Plot each metric
+                for i, (ax, metric_name) in enumerate(zip(axes, metric_ds.data_vars)):
+                    metric = metric_ds[metric_name]
+                    aggregated_value = metric.mean().item()
+                    std_value = metric.std().item()
+                    im = metric.plot(ax=ax, cmap='jet', robust=True, add_colorbar=True)
+
+                    # Format colorbar using ScalarFormatter
+                    if im.colorbar:
+                        im.colorbar.formatter = ScalarFormatter(useMathText=True)
+                        im.colorbar.formatter.set_powerlimits((0, 2))
+                        im.colorbar.update_ticks()
+                        im.colorbar.set_label('')
+                    
+                    # Set titles and labels with appropriate font sizes
+                    ax.set_title(f'{metric_name}' if row_idx == 0 else '', fontsize=font_size)
+                    ax.set_xlabel('XLONG' if row_idx == num_pds - 1 else '', fontsize=font_size)
+                    ax.xaxis.set_tick_params(labelbottom=(row_idx == num_pds - 1))
+                    ax.set_ylabel(pds.workspace_name if i == 0 else '', fontsize=font_size)
+                    ax.yaxis.set_tick_params(labelleft=(i == 0))
+                    
+                    # Annotation for average and standard deviation
+                    ax.text(0.97, 0.12, f'aver.: {aggregated_value:.2e}', horizontalalignment='right',
+                            verticalalignment='center', transform=ax.transAxes,
+                            fontsize=font_size-3, color='white', bbox=dict(facecolor='black', alpha=0.6))
+                    ax.text(0.97, 0.05, f'std: {std_value:.2e}', horizontalalignment='right',
+                            verticalalignment='center', transform=ax.transAxes,
+                            fontsize=font_size-3, color='white', bbox=dict(facecolor='black', alpha=0.6))
+        
+        # Adjust layout and display the plot
+        plt.tight_layout(pad=-0.0)
+        plt.show()
+        
+
+
 from matplotlib import pyplot as plt
 
 def plot_compression_ratios(df, method_list, var_list, x, y, level,x_lim=None, y_lim=None):
