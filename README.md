@@ -1,6 +1,7 @@
 # SciCodec: Scientific Data Compression Toolkit
 
 SciCodec is a comprehensive Python package designed for scientific data compression, providing a unified interface to various compression methods specifically tailored for scientific datasets.
+https://px39n.gitbook.io/sci-codecs
 
 ## Key Features
 
@@ -119,5 +120,5 @@ etc,.
 - C++ compiler (for some compression libraries)
 - CUDA toolkit (optional, for GPU acceleration)
 
-For more detailed documentation and examples, visit our [documentation](https://github.com/sci-codec/sci-codec).
+For more detailed documentation and examples, visit our [documentation](https://px39n.gitbook.io/sci-codecs).
 ```
